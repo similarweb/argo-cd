@@ -285,17 +285,22 @@ func (a *ArgoCDWebhookHandler) storePreviouslyCachedManifests(app *v1alpha1.Appl
 		return fmt.Errorf("error getting cluster info: %w", err)
 	}
 
-	cache.LogDebugManifestCacheKeyFields("getting manifests cache", "webhook app revision changed", change.shaBefore, &app.Spec.Source, &clusterInfo, app.Spec.Destination.Namespace, trackingMethod, appInstanceLabelKey, app.Name)
+	refSources, err := argo.GetRefSources(context.Background(), app.Spec, a.db)
+	if err != nil {
+		return fmt.Errorf("error getting ref sources: %w", err)
+	}
+	source := app.Spec.GetSource()
+	cache.LogDebugManifestCacheKeyFields("getting manifests cache", "webhook app revision changed", change.shaBefore, &source, refSources, &clusterInfo, app.Spec.Destination.Namespace, trackingMethod, appInstanceLabelKey, app.Name)
 
 	var cachedManifests cache.CachedManifestResponse
-	if err := a.repoCache.GetManifests(change.shaBefore, &app.Spec.Source, &clusterInfo, app.Spec.Destination.Namespace, trackingMethod, appInstanceLabelKey, app.Name, &cachedManifests); err != nil {
-		return fmt.Errorf("error getting manifests: %w", err)
+	if err := a.repoCache.GetManifests(change.shaBefore, &source, refSources, &clusterInfo, app.Spec.Destination.Namespace, trackingMethod, appInstanceLabelKey, app.Name, &cachedManifests); err != nil {
+		return err
 	}
 
-	cache.LogDebugManifestCacheKeyFields("setting manifests cache", "webhook app revision changed", change.shaAfter, &app.Spec.Source, &clusterInfo, app.Spec.Destination.Namespace, trackingMethod, appInstanceLabelKey, app.Name)
+	cache.LogDebugManifestCacheKeyFields("setting manifests cache", "webhook app revision changed", change.shaAfter, &source, refSources, &clusterInfo, app.Spec.Destination.Namespace, trackingMethod, appInstanceLabelKey, app.Name)
 
-	if err = a.repoCache.SetManifests(change.shaAfter, &app.Spec.Source, &clusterInfo, app.Spec.Destination.Namespace, trackingMethod, appInstanceLabelKey, app.Name, &cachedManifests); err != nil {
-		return fmt.Errorf("error setting manifests: %w", err)
+	if err = a.repoCache.SetManifests(change.shaAfter, &source, refSources, &clusterInfo, app.Spec.Destination.Namespace, trackingMethod, appInstanceLabelKey, app.Name, &cachedManifests); err != nil {
+		return err
 	}
 	return nil
 }
@@ -310,7 +315,7 @@ func getAppRefreshPaths(app *v1alpha1.Application) []string {
 			if filepath.IsAbs(item) {
 				item = item[1:]
 			} else {
-				item = filepath.Clean(filepath.Join(app.Spec.Source.Path, item))
+				item = filepath.Clean(filepath.Join(app.Spec.GetSource().Path, item))
 			}
 			paths = append(paths, item)
 		}
@@ -364,27 +369,27 @@ func ensureAbsPath(input string) string {
 }
 
 func appRevisionHasChanged(app *v1alpha1.Application, revision string, touchedHead bool) bool {
-	targetRev := parseRevision(app.Spec.Source.TargetRevision)
+	targetRev := parseRevision(app.Spec.GetSource().TargetRevision)
 	if targetRev == "HEAD" || targetRev == "" { // revision is head
 		return touchedHead
 	}
 	targetRevisionHasPrefixList := []string{"refs/heads/", "refs/tags/"}
 	for _, prefix := range targetRevisionHasPrefixList {
-		if strings.HasPrefix(app.Spec.Source.TargetRevision, prefix) {
+		if strings.HasPrefix(app.Spec.GetSource().TargetRevision, prefix) {
 			return revision == targetRev
 		}
 	}
 
-	return app.Spec.Source.TargetRevision == revision
+	return app.Spec.GetSource().TargetRevision == revision
 }
 
 func appUsesURL(app *v1alpha1.Application, webURL string, repoRegexp *regexp.Regexp) bool {
-	if !repoRegexp.MatchString(app.Spec.Source.RepoURL) {
-		log.Debugf("%s does not match %s", app.Spec.Source.RepoURL, repoRegexp.String())
+	if !repoRegexp.MatchString(app.Spec.GetSource().RepoURL) {
+		log.Debugf("%s does not match %s", app.Spec.GetSource().RepoURL, repoRegexp.String())
 		return false
 	}
 
-	log.Debugf("%s uses repoURL %s", app.Spec.Source.RepoURL, webURL)
+	log.Debugf("%s uses repoURL %s", app.Spec.GetSource().RepoURL, webURL)
 	return true
 }
 
